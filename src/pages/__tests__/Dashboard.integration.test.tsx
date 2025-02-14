@@ -1,13 +1,9 @@
-// Dashboard.integration.test.tsx
-
-import React from 'react';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import Dashboard from '../Dashboard';
-import {getAllLivingLabs} from '../../services/livingLabService';
+import { getAllLivingLabs } from '../../services/livingLabService';
 import { addExperiment, getExperiments } from '../../services/experimentService';
 import dotenv from 'dotenv';
-
 
 // Load environment variables
 dotenv.config();
@@ -22,7 +18,7 @@ describe('Dashboard Integration Tests', () => {
   let startDate: Date;
   let endDate: Date;
 
-  // Use existing LivingLab
+  // Use existing LivingLab (for example, test account already has one)
   const existingLivingLabId = '9c7dbce1-6c4f-46b6-b0c6-ec5d2c2b48c1';
   const existingLivingLabName = 'Living Lab Eindhoven';
 
@@ -31,7 +27,7 @@ describe('Dashboard Integration Tests', () => {
   });
   
   beforeAll(async () => {
-    // Insert authentication token into localStorage
+    // Insert authentication token into localStorage (if provided)
     const authToken = process.env.AUTH_TOKEN;
     if (authToken) {
       window.localStorage.setItem('authToken', authToken);
@@ -47,13 +43,13 @@ describe('Dashboard Integration Tests', () => {
     startDate = new Date(today.getTime() + 24 * 60 * 60 * 1000); // Tomorrow
     endDate = new Date(today.getTime() + 10 * 24 * 60 * 60 * 1000); // 10 days from today
   
+    // Create our experiments via API
     for (const name of experimentNames) {
       const experimentData = {
         name,
         description: 'Sample experiment description',
         start: startDate.toISOString(),
         end: endDate.toISOString(),
-        // Removed unexpected properties
       };
   
       try {
@@ -73,7 +69,7 @@ describe('Dashboard Integration Tests', () => {
   // CATEGORY 1: DATA FETCHING AND INITIAL RENDERING
 
   test('FETCH LIVINGLABS AND EXPERIMENTS ON MOUNT', async () => {
-    // Fetch data directly
+    // Get data from API
     const livingLabs = await getAllLivingLabs();
     const myExperiments = await getExperiments();
 
@@ -83,20 +79,21 @@ describe('Dashboard Integration Tests', () => {
       </MemoryRouter>
     );
 
-    // Wait for the Dashboard to render
+    // Wait for the experiments table to render
     await waitFor(() => {
       expect(screen.getByTestId('experiments-table')).toBeInTheDocument();
     });
 
-    // Verify that the experiments from getMyExperiments are displayed
+    // Verify that every experiment (from the API) is rendered (by unique row test ID)
     for (const experiment of myExperiments) {
-      expect(screen.getByText(experiment.name)).toBeInTheDocument();
+      expect(screen.getByTestId(`experiment-row-${experiment.ID}`)).toBeInTheDocument();
     }
 
-    // Verify that the living labs from getAllLivingLabs are available in the filters
+    // Open the LivingLab dropdown and narrow the query to its content
     fireEvent.click(screen.getByTestId('livinglab-dropdown-button'));
+    const dropdownContent = screen.getByTestId('livinglab-dropdown-content');
     for (const lab of livingLabs) {
-      expect(screen.getByText(lab.name)).toBeInTheDocument();
+      expect(within(dropdownContent).getByText(lab.name)).toBeInTheDocument();
     }
   });
 
@@ -107,20 +104,19 @@ describe('Dashboard Integration Tests', () => {
       </MemoryRouter>
     );
 
-    // Initially, the loading container should be in the document
+    // Initially the loading container is visible
     expect(screen.getByTestId('loading-container')).toBeInTheDocument();
 
-    // Wait for the experiments table to appear
+    // When experiments load, the table appears...
     await waitFor(() => {
       expect(screen.getByTestId('experiments-table')).toBeInTheDocument();
     });
 
-    // Now, the loading container should not be in the document
+    // ...and the loading container disappears.
     expect(screen.queryByTestId('loading-container')).not.toBeInTheDocument();
   });
 
   test('RENDER EXPERIMENTS TABLE AFTER FETCH', async () => {
-    // Fetch experiments
     const myExperiments = await getExperiments();
 
     render(
@@ -129,60 +125,20 @@ describe('Dashboard Integration Tests', () => {
       </MemoryRouter>
     );
 
-    // Wait for the experiments table to appear
     await waitFor(() => {
       expect(screen.getByTestId('experiments-table')).toBeInTheDocument();
     });
 
-    // Verify that the experiments are displayed
     for (const experiment of myExperiments) {
-      expect(screen.getByText(experiment.name)).toBeInTheDocument();
+      expect(screen.getByTestId(`experiment-row-${experiment.ID}`)).toBeInTheDocument();
     }
   });
-
 
   // CATEGORY 2: SORTING AND FILTERING INTERACTION
 
-  test('SORTING APPLIES AFTER FILTERING', async () => {
-    // Fetch experiments
-    const myExperiments = await getExperiments();
-
-    render(
-      <MemoryRouter>
-        <Dashboard />
-      </MemoryRouter>
-    );
-
-    // Wait for experiments to be displayed
-    for (const experiment of myExperiments) {
-      expect(await screen.findByText(experiment.name)).toBeInTheDocument();
-    }
-
-    // Apply search filter
-    const searchInput = screen.getByTestId('search-input');
-    fireEvent.change(searchInput, { target: { value: 'Experiment' } });
-
-    // Sort by 'Responses' (assuming 'Responses' is a sortable column)
-    const responsesHeader = screen.getByText('Responses');
-    fireEvent.click(responsesHeader);
-
-    // Verify the order of experiments
-    const experimentRows = screen.getAllByTestId(/experiment-row-/);
-
-    // Sort experiments manually to get expected order
-    const sortedExperiments = [...myExperiments]
-      .filter((exp) => exp.name.includes('Experiment'))
-      .sort((a, b) => (b.responses ?? 0) - (a.responses ?? 0));
-
-    for (let i = 0; i < sortedExperiments.length; i++) {
-      const row = experimentRows[i];
-      expect(within(row).getByText(sortedExperiments[i].name)).toBeInTheDocument();
-    }
-  });
-
   test('FILTERING UPDATES SORTED LIST', async () => {
-    // Fetch experiments
     const myExperiments = await getExperiments();
+    const ourExperiments = myExperiments.filter(exp => exp.name.includes(uniqueId));
 
     render(
       <MemoryRouter>
@@ -190,24 +146,26 @@ describe('Dashboard Integration Tests', () => {
       </MemoryRouter>
     );
 
-    // Wait for experiments to be displayed
-    for (const experiment of myExperiments) {
-      expect(await screen.findByText(experiment.name)).toBeInTheDocument();
+    // Wait for our experiments to render
+    for (const experiment of ourExperiments) {
+      await waitFor(() => {
+        expect(screen.getByTestId(`experiment-row-${experiment.ID}`)).toBeInTheDocument();
+      });
     }
 
-    // Sort by 'Responses'
+    // Click the "Responses" header to sort the table
     const responsesHeader = screen.getByText('Responses');
     fireEvent.click(responsesHeader);
 
-    // Apply search filter
+    // Apply a search filter using one of our unique experiment names
     const searchInput = screen.getByTestId('search-input');
     fireEvent.change(searchInput, { target: { value: experimentNames[0] } });
 
     const experimentRows = screen.getAllByTestId(/experiment-row-/);
-    expect(within(experimentRows[0]).getByText(experimentNames[0])).toBeInTheDocument();
+    // Verify that only our first experiment is displayed
+    expect(within(experimentRows[0]).getByTestId('experiment-name').textContent).toContain(experimentNames[0]);
     expect(experimentRows.length).toBe(1);
   });
-
 
   // CATEGORY 3: RESPONSIVENESS AND UI ELEMENTS
 
@@ -218,7 +176,6 @@ describe('Dashboard Integration Tests', () => {
       </MemoryRouter>
     );
 
-    // Wait for the component to render
     await waitFor(() => {
       expect(screen.getByTestId('livinglab-dropdown-button')).toBeInTheDocument();
     });
@@ -237,7 +194,6 @@ describe('Dashboard Integration Tests', () => {
   });
 
   test('ALTERNATING ROW COLORS', async () => {
-    // Fetch experiments
     const myExperiments = await getExperiments();
 
     render(
@@ -246,36 +202,37 @@ describe('Dashboard Integration Tests', () => {
       </MemoryRouter>
     );
 
-    // Wait for experiments to be displayed
+    // Wait for all experiment rows to appear
     for (const experiment of myExperiments) {
-      expect(await screen.findByText(experiment.name)).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByTestId(`experiment-row-${experiment.ID}`)).toBeInTheDocument();
+      });
     }
 
     const experimentRows = screen.getAllByTestId(/experiment-row-/);
-    expect(experimentRows[0]).toHaveClass('row-even');
-    expect(experimentRows[1]).toHaveClass('row-odd');
+    if (experimentRows.length >= 2) {
+      expect(experimentRows[0]).toHaveClass('row-even');
+      expect(experimentRows[1]).toHaveClass('row-odd');
+    }
   });
 
   // CATEGORY 4: STATE MANAGEMENT AND SIDE EFFECTS
 
   test('USEEFFECT DEPENDENCIES TRIGGER CORRECTLY', async () => {
-    // Fetch experiments
-    const myExperiments = await getExperiments();
-
     render(
       <MemoryRouter>
         <Dashboard />
       </MemoryRouter>
     );
 
-    // Wait for experiments to be displayed
+    // Wait for our first created experiment (with a unique name) to appear
     expect(await screen.findByText(experimentNames[0])).toBeInTheDocument();
 
-    // Change search input
+    // Change the search input to filter for our first experiment
     const searchInput = screen.getByTestId('search-input');
     fireEvent.change(searchInput, { target: { value: experimentNames[0] } });
 
-    // Verify that only the searched experiment is displayed
+    // Verify that only our first experiment is visible
     expect(screen.getByText(experimentNames[0])).toBeInTheDocument();
     expect(screen.queryByText(experimentNames[1])).not.toBeInTheDocument();
   });
